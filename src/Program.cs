@@ -60,6 +60,7 @@ namespace ManagedRegsvr32
             InvalidArguments = 6,
             OleError = 7,
             ModulePlatform = 8,
+            AccessDenied = 9
         }
 
         [STAThread]
@@ -166,6 +167,9 @@ namespace ManagedRegsvr32
                 case ExitCode.ModulePlatform:
                     msg = "Check if the module is compatible with x86 or x64 version of ManagedRegsvr32";
                     break;
+                case ExitCode.AccessDenied:
+                    msg = "Access denied, please run from elevated prompt";
+                    break;
                 case ExitCode.Success:
                     if (_unregister == false)
                     {
@@ -198,8 +202,18 @@ namespace ManagedRegsvr32
                 return ExitCode.DllUnRegisterServerNotFound;
 
             DllUnRegisterServer DllUnRegisterServerFunc = (DllUnRegisterServer)Marshal.GetDelegateForFunctionPointer(DllUnRegisterServerPtr, typeof(DllUnRegisterServer));
+            IntPtr callResult = DllUnRegisterServerFunc();
 
-            return (DllUnRegisterServerFunc() == IntPtr.Zero) ? ExitCode.Success : ExitCode.DllUnRegisterServerNotFound;
+            if (callResult == IntPtr.Zero)
+            {
+                return ExitCode.Success;
+            }
+            else if (callResult.ToInt32() == -2147467259)
+            {
+                return ExitCode.AccessDenied;
+            }
+
+            return ExitCode.FailedToCallRegisterMethod;
         }
 
         private static ExitCode CallDllRegisterServer(IntPtr modulePtr)
@@ -210,8 +224,18 @@ namespace ManagedRegsvr32
                 return ExitCode.DllRegisterServerNotFound;
 
             DllRegisterServer DllRegisterServerFunc = (DllRegisterServer)Marshal.GetDelegateForFunctionPointer(DllRegisterServerPtr, typeof(DllRegisterServer));
+            IntPtr callResult = DllRegisterServerFunc();
 
-            return (DllRegisterServerFunc() == IntPtr.Zero) ? ExitCode.Success : ExitCode.DllRegisterServerNotFound;
+            if (callResult == IntPtr.Zero)
+            {
+                return ExitCode.Success;
+            }
+            else if (callResult.ToInt32() == -2147467259)
+            {
+                return ExitCode.AccessDenied;
+            }
+
+            return ExitCode.FailedToCallRegisterMethod;
         }
 
         private static ExitCode ProcessLibrary(string path, Func<IntPtr, ExitCode> callingAction)
