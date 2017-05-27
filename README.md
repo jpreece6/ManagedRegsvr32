@@ -1,6 +1,7 @@
 # ManagedRegsvr32
 A open source managed version of the Microsoft Regsvr32.exe tool. I made this clone because the Regsvr32 shipped with Windows always returns zero, which makes it impossible to determine if registration succeeded or failed from a batch script. 
 
+### Usage
 From Cmd or Powershell
 
 Register a COM module
