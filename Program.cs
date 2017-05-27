@@ -2,12 +2,12 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Linq;
 
 namespace ManagedRegsvr32
 {
     class Program
-    {
-
+    {  
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hReservedNull, LoadLibraryFlags dwFlags);
 
@@ -26,12 +26,6 @@ namespace ManagedRegsvr32
 
         [DllImport("Ole32", SetLastError = true)]
         static extern void OleUninitialize();
-
-        [DllImport("kernel32.dll")]
-        static extern IntPtr GetConsoleWindow();
-
-        [DllImport("user32.dll")]
-        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         [System.Flags]
         enum LoadLibraryFlags : uint
@@ -53,10 +47,7 @@ namespace ManagedRegsvr32
         private delegate IntPtr DllUnRegisterServer();
 
         private static bool _unregister;
-        private static Options _options;
-
-        const int SW_HIDE = 0;
-        const int SW_SHOW = 5;
+        private static bool _silent;
 
         public enum ExitCode
         {
@@ -66,48 +57,70 @@ namespace ManagedRegsvr32
             DllUnRegisterServerNotFound = 3,
             FailedToCallRegisterMethod = 4,
             FailedToCallUnRegisterMethod = 5,
-            InvalidArgument = 6,
+            InvalidArguments = 6,
             OleError = 7,
-            ModulePlatform = 8
+            ModulePlatform = 8,
         }
 
         [STAThread]
         static void Main(string[] args)
         {
-            var hwnd = GetConsoleWindow();
-            ShowWindow(hwnd, SW_HIDE);
 
-            _options = new Options();
-            var valid = CommandLine.Parser.Default.ParseArgumentsStrict(args, _options);
-
-            if (valid == false)
-                Environment.Exit((int)ExitCode.InvalidArgument);
-
-            if (File.Exists(_options.DllPath) == false)
+            if (args.Length == 0)
             {
-                ShowResult(ExitCode.Load_Failed);
-                Environment.Exit((int)ExitCode.Load_Failed);
+                ShowHelp();
+                Environment.Exit((int) ExitCode.InvalidArguments);
             }
 
-            if (_options.ShowConsole)
-            {
-                ShowWindow(hwnd, SW_SHOW);
-            }
+            if (OleInitialize(IntPtr.Zero) != 0)
+                Environment.Exit((int) ExitCode.OleError);
 
-            _unregister = _options.UnRegister;
+            _unregister = false;
+            _silent = false;
 
             ExitCode exitResult = ExitCode.Load_Failed;
-            if (_unregister)
+            foreach (var arg in args)
             {
-                exitResult = UnRegister(_options.DllPath);
-            }
-            else
-            {
-                exitResult = Register(_options.DllPath);
+                if (arg.Contains('-') || arg.Contains('/'))
+                {
+                    switch(arg)
+                    {
+                        case "-s":
+                            _silent = true;
+                            break;
+                        case "-u":
+                            _unregister = true;
+                            break;
+                    }
+                    
+                    continue;
+                }
+
+
+                var modulePath = arg;
+
+                if (File.Exists(modulePath) == false)
+                {
+                    ShowResult(ExitCode.Load_Failed);
+                    Environment.Exit((int)ExitCode.Load_Failed);
+                }
+
+                if (_unregister)
+                {
+                    exitResult = UnRegister(modulePath);
+                }
+                else
+                {
+                    exitResult = Register(modulePath);
+                }
+
+                ShowResult(exitResult);
+
+                if (exitResult != ExitCode.Success)
+                    Environment.Exit((int)exitResult);
             }
 
-            
-            ShowResult(exitResult);
+            OleUninitialize();
 
             Environment.Exit((int)exitResult);
         }
@@ -133,7 +146,7 @@ namespace ManagedRegsvr32
                 case ExitCode.FailedToCallUnRegisterMethod:
                     msg = "DllUnRegisterServer was found but a call to it could not be made.";
                     break;
-                case ExitCode.InvalidArgument:
+                case ExitCode.InvalidArguments:
                     msg = "One or more invalid argument supplied please check the arguments.";
                     break;
                 case ExitCode.OleError:
@@ -158,86 +171,63 @@ namespace ManagedRegsvr32
                     break;
             }
 
-            Console.WriteLine(msg);
+            if (_silent == false)
+            {
 
-            if (_options.Silent == false)
+                Console.WriteLine(msg);
                 MessageBox.Show(msg, "ManagedRegsvr32", MessageBoxButtons.OK, icon);
+            }
+        }
+
+        private static ExitCode CallDllUnRegisterServer(IntPtr modulePtr)
+        {
+            IntPtr DllUnRegisterServerPtr = GetProcAddress(modulePtr, "DllUnregisterServer");
+
+            if (DllUnRegisterServerPtr == IntPtr.Zero)
+                return ExitCode.DllUnRegisterServerNotFound;
+
+            DllUnRegisterServer DllUnRegisterServerFunc = (DllUnRegisterServer)Marshal.GetDelegateForFunctionPointer(DllUnRegisterServerPtr, typeof(DllUnRegisterServer));
+
+            return (DllUnRegisterServerFunc() == IntPtr.Zero) ? ExitCode.Success : ExitCode.DllUnRegisterServerNotFound;
+        }
+
+        private static ExitCode CallDllRegisterServer(IntPtr modulePtr)
+        {
+            IntPtr DllRegisterServerPtr = GetProcAddress(modulePtr, "DllRegisterServer");
+
+            if (DllRegisterServerPtr == IntPtr.Zero)
+                return ExitCode.DllRegisterServerNotFound;
+
+            DllRegisterServer DllRegisterServerFunc = (DllRegisterServer)Marshal.GetDelegateForFunctionPointer(DllRegisterServerPtr, typeof(DllRegisterServer));
+
+            return (DllRegisterServerFunc() == IntPtr.Zero) ? ExitCode.Success : ExitCode.DllRegisterServerNotFound;
+        }
+
+        private static ExitCode ProcessLibrary(string path, Func<IntPtr, ExitCode> callingAction)
+        {
+
+            // Load our module
+            IntPtr modulePtr = LoadLibraryEx(path, IntPtr.Zero, LoadLibraryFlags.LOAD_WITH_ALTERED_SEARCH_PATH);
+
+            if (modulePtr == IntPtr.Zero)
+                return CheckLastError(ExitCode.Load_Failed);
+
+            // Call our desired method
+            ExitCode callResult = callingAction(modulePtr);
+
+            // Cleanup code and return our result
+            FreeLibrary(modulePtr);
+            return callResult;
         }
 
         public static ExitCode Register(string path)
         {
-            var OleResult = OleInitialize(IntPtr.Zero);
-
-            if (OleResult != 0)
-                return ExitCode.OleError;
-
-            IntPtr modulePtr = LoadLibraryEx(path, IntPtr.Zero, LoadLibraryFlags.LOAD_WITH_ALTERED_SEARCH_PATH);
-
-            if (modulePtr == IntPtr.Zero)
-            {
-                OleUninitialize();
-
-                return CheckLastError(ExitCode.Load_Failed);
-            }
-
-            IntPtr DllRegisterServerPtr = GetProcAddress(modulePtr, "DllRegisterServer");
-
-            if (DllRegisterServerPtr == IntPtr.Zero)
-            {
-                OleUninitialize();
-                FreeLibrary(modulePtr);
-                return ExitCode.DllRegisterServerNotFound;
-            }
-
-            DllRegisterServer DllRegisterServerFunc = (DllRegisterServer) Marshal.GetDelegateForFunctionPointer(DllRegisterServerPtr, typeof(DllRegisterServer));
-
-            var result = DllRegisterServerFunc();
-            if (result == IntPtr.Zero)
-            {
-                OleUninitialize();
-                FreeLibrary(modulePtr);
-                return ExitCode.Success;
-            }
-
-            OleUninitialize();
-            FreeLibrary(modulePtr);
-            return ExitCode.FailedToCallRegisterMethod;
+            return ProcessLibrary(path, CallDllRegisterServer);
         }
 
         public static ExitCode UnRegister(string path)
         {
-            var oleResult = OleInitialize(IntPtr.Zero);
-
-            if (oleResult != 0)
-                return ExitCode.OleError;
-
-            IntPtr modulePtr = LoadLibraryEx(path, IntPtr.Zero, LoadLibraryFlags.LOAD_WITH_ALTERED_SEARCH_PATH);
-
-            if (modulePtr == IntPtr.Zero)
-                return ExitCode.Load_Failed;
-
-            IntPtr DllUnregisterServerPtr = GetProcAddress(modulePtr, "DllUnregisterServer");
-
-            if (DllUnregisterServerPtr == IntPtr.Zero)
-            {
-                OleUninitialize();
-                FreeLibrary(modulePtr);
-                return ExitCode.DllUnRegisterServerNotFound;
-            }
-
-            DllUnRegisterServer DllUnregisterServerFunc = (DllUnRegisterServer)Marshal.GetDelegateForFunctionPointer(DllUnregisterServerPtr, typeof(DllUnRegisterServer));
-
-            var result = DllUnregisterServerFunc();
-            if (result == IntPtr.Zero)
-            {
-                OleUninitialize();
-                FreeLibrary(modulePtr);
-                return ExitCode.Success;
-            }
-
-            OleUninitialize();
-            FreeLibrary(modulePtr);
-            return ExitCode.FailedToCallUnRegisterMethod;
+            return ProcessLibrary(path, CallDllUnRegisterServer);
         }
 
         private static ExitCode CheckLastError(ExitCode currentError = ExitCode.Success)
@@ -250,6 +240,14 @@ namespace ManagedRegsvr32
             }
 
             return currentError;
+        }
+
+        private static void ShowHelp()
+        {
+            string banner = typeof(Program).Assembly.GetName().Name + " v" + typeof(Program).Assembly.GetName().Version;
+            string msg = "\nUsage = [-?] [-s] [-u] ModulePath";
+            Console.WriteLine(banner);
+            Console.WriteLine(msg);
         }
     }
 }
