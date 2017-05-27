@@ -105,6 +105,7 @@ namespace ManagedRegsvr32
                 if (File.Exists(modulePath) == false)
                 {
                     ShowResult(ExitCode.Load_Failed);
+                    OleUninitialize();
                     Environment.Exit((int)ExitCode.Load_Failed);
                 }
 
@@ -120,12 +121,14 @@ namespace ManagedRegsvr32
                 ShowResult(exitResult);
 
                 if (exitResult != ExitCode.Success)
+                {
+                    OleUninitialize();
                     Environment.Exit((int)exitResult);
+                }
             }
 
             // Clean up and report error code
             OleUninitialize();
-
             Environment.Exit((int)exitResult);
         }
 
