@@ -65,22 +65,25 @@ namespace ManagedRegsvr32
         [STAThread]
         static void Main(string[] args)
         {
-
+            // Bomb out here if the invoker failed to provide arguments
             if (args.Length == 0)
             {
                 ShowHelp();
                 Environment.Exit((int) ExitCode.InvalidArguments);
             }
 
+            // Initialise OLE
             if (OleInitialize(IntPtr.Zero) != 0)
                 Environment.Exit((int) ExitCode.OleError);
 
             _unregister = false;
             _silent = false;
 
+            // Process each argument available
             ExitCode exitResult = ExitCode.Load_Failed;
             foreach (var arg in args)
             {
+                // Support - and / prefixes
                 if (arg.Contains('-') || arg.Contains('/'))
                 {
                     switch(arg)
@@ -120,11 +123,16 @@ namespace ManagedRegsvr32
                     Environment.Exit((int)exitResult);
             }
 
+            // Clean up and report error code
             OleUninitialize();
 
             Environment.Exit((int)exitResult);
         }
 
+        /// <summary>
+        /// Displays a detailed description of the error code. Does not show if -s has been used
+        /// </summary>
+        /// <param name="code">Code to detail</param>
         private static void ShowResult(ExitCode code)
         {
             var msg = "";
@@ -220,16 +228,32 @@ namespace ManagedRegsvr32
             return callResult;
         }
 
+        /// <summary>
+        /// Entry point to call DllRegister of the specifed module
+        /// </summary>
+        /// <param name="path">Module path</param>
+        /// <returns>Exit code of the current process</returns>
         public static ExitCode Register(string path)
         {
             return ProcessLibrary(path, CallDllRegisterServer);
         }
 
+
+        /// <summary>
+        /// Entry point to call DllUnregister of the specifed module
+        /// </summary>
+        /// <param name="path">Module Path</param>
+        /// <returns>Exit code of the current process</returns>
         public static ExitCode UnRegister(string path)
         {
             return ProcessLibrary(path, CallDllUnRegisterServer);
         }
 
+        /// <summary>
+        /// Return last error as a exit code
+        /// </summary>
+        /// <param name="currentError">Current exit code</param>
+        /// <returns>Last error as exit code</returns>
         private static ExitCode CheckLastError(ExitCode currentError = ExitCode.Success)
         {
             var result = GetLastError();
@@ -242,6 +266,9 @@ namespace ManagedRegsvr32
             return currentError;
         }
 
+        /// <summary>
+        /// Prints usage details to StdOut
+        /// </summary>
         private static void ShowHelp()
         {
             string banner = typeof(Program).Assembly.GetName().Name + " v" + typeof(Program).Assembly.GetName().Version;
